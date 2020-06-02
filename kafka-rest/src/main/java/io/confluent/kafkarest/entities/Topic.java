@@ -15,68 +15,33 @@
 
 package io.confluent.kafkarest.entities;
 
+import com.google.auto.value.AutoValue;
+import com.google.common.collect.ImmutableList;
 import java.util.List;
-import java.util.Objects;
-import java.util.Properties;
-import java.util.StringJoiner;
 
-public final class Topic {
+@AutoValue
+public abstract class Topic {
 
-  private final String name;
-
-  private final Properties configs;
-
-  private final List<Partition> partitions;
-
-  public Topic(String name, Properties configs, List<Partition> partitions) {
-    if (name.isEmpty()) {
-      throw new IllegalArgumentException();
-    }
-    if (partitions.isEmpty()) {
-      throw new IllegalArgumentException();
-    }
-    this.name = name;
-    this.configs = Objects.requireNonNull(configs);
-    this.partitions = partitions;
+  Topic() {
   }
 
-  public String getName() {
-    return name;
-  }
+  public abstract String getClusterId();
 
-  public Properties getConfigs() {
-    return configs;
-  }
+  public abstract String getName();
 
-  public List<Partition> getPartitions() {
-    return partitions;
-  }
+  public abstract ImmutableList<Partition> getPartitions();
 
-  @Override
-  public boolean equals(Object o) {
-    if (this == o) {
-      return true;
-    }
-    if (o == null || getClass() != o.getClass()) {
-      return false;
-    }
-    Topic topic = (Topic) o;
-    return Objects.equals(name, topic.name)
-        && Objects.equals(configs, topic.configs)
-        && Objects.equals(partitions, topic.partitions);
-  }
+  public abstract short getReplicationFactor();
 
-  @Override
-  public int hashCode() {
-    return Objects.hash(name, configs, partitions);
-  }
+  public abstract boolean isInternal();
 
-  @Override
-  public String toString() {
-    return new StringJoiner(", ", Topic.class.getSimpleName() + "[", "]")
-        .add("name='" + name + "'")
-        .add("configs=" + configs)
-        .add("partitions=" + partitions)
-        .toString();
+  public static Topic create(
+      String clusterId,
+      String name,
+      List<Partition> partitions,
+      short replicationFactor,
+      boolean isInternal) {
+    return new AutoValue_Topic(
+        clusterId, name, ImmutableList.copyOf(partitions), replicationFactor, isInternal);
   }
 }

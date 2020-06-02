@@ -16,8 +16,8 @@
 package io.confluent.kafkarest.resources;
 
 import io.confluent.kafkarest.KafkaRestContext;
-import io.confluent.kafkarest.resources.v1.V1ResourcesFeature;
 import io.confluent.kafkarest.resources.v2.V2ResourcesFeature;
+import io.confluent.kafkarest.resources.v3.V3ResourcesFeature;
 import java.util.Objects;
 import javax.ws.rs.core.Feature;
 import javax.ws.rs.core.FeatureContext;
@@ -31,8 +31,8 @@ public final class ResourcesFeature implements Feature {
 
   @Override
   public boolean configure(FeatureContext configurable) {
-    configurable.register(new V1ResourcesFeature(context));
     configurable.register(new V2ResourcesFeature(context));
+    configurable.register(V3ResourcesFeature.class);
     return true;
   }
 }

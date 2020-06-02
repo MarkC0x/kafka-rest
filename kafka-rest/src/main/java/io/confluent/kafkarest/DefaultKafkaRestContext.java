@@ -26,25 +26,22 @@ import org.apache.kafka.clients.admin.AdminClient;
 public class DefaultKafkaRestContext implements KafkaRestContext {
 
   private final KafkaRestConfig config;
-  private final ScalaConsumersContext scalaConsumersContext;
   private ProducerPool producerPool;
   private KafkaConsumerManager kafkaConsumerManager;
   private AdminClientWrapper adminClientWrapper;
-
+  private AdminClient admin;
 
   public DefaultKafkaRestContext(
       KafkaRestConfig config,
       ProducerPool producerPool,
       KafkaConsumerManager kafkaConsumerManager,
-      AdminClientWrapper adminClientWrapper,
-      ScalaConsumersContext scalaConsumersContext
+      AdminClientWrapper adminClientWrapper
   ) {
 
     this.config = config;
     this.producerPool = producerPool;
     this.kafkaConsumerManager = kafkaConsumerManager;
     this.adminClientWrapper = adminClientWrapper;
-    this.scalaConsumersContext = scalaConsumersContext;
   }
 
 
@@ -62,21 +59,6 @@ public class DefaultKafkaRestContext implements KafkaRestContext {
   }
 
   @Override
-  public ScalaConsumersContext getScalaConsumersContext() {
-    return scalaConsumersContext;
-  }
-
-  @Override
-  public ConsumerManager getConsumerManager() {
-    return scalaConsumersContext.getConsumerManager();
-  }
-
-  @Override
-  public SimpleConsumerManager getSimpleConsumerManager() {
-    return scalaConsumersContext.getSimpleConsumerManager();
-  }
-
-  @Override
   public KafkaConsumerManager getKafkaConsumerManager() {
     if (kafkaConsumerManager == null) {
       kafkaConsumerManager = new KafkaConsumerManager(config);
@@ -87,10 +69,17 @@ public class DefaultKafkaRestContext implements KafkaRestContext {
   @Override
   public AdminClientWrapper getAdminClientWrapper() {
     if (adminClientWrapper == null) {
-      adminClientWrapper = new AdminClientWrapper(config,
-          AdminClient.create(AdminClientWrapper.adminProperties(config)));
+      adminClientWrapper = new AdminClientWrapper(config, getAdmin());
     }
     return adminClientWrapper;
+  }
+
+  @Override
+  public AdminClient getAdmin() {
+    if (admin == null) {
+      admin = AdminClient.create(AdminClientWrapper.adminProperties(config));
+    }
+    return admin;
   }
 
   @Override
@@ -103,9 +92,6 @@ public class DefaultKafkaRestContext implements KafkaRestContext {
     }
     if (adminClientWrapper != null) {
       adminClientWrapper.shutdown();
-    }
-    if (scalaConsumersContext != null) {
-      scalaConsumersContext.shutdown();
     }
   }
 }

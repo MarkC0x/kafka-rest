@@ -24,17 +24,18 @@ import io.confluent.kafka.serializers.KafkaAvroSerializer;
 import io.confluent.kafka.serializers.KafkaJsonSerializer;
 import io.confluent.kafkarest.KafkaRestConfig;
 import io.confluent.kafkarest.ProducerPool;
-import io.confluent.kafkarest.ScalaConsumersContext;
 import java.io.File;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.Vector;
 import java.util.concurrent.ExecutionException;
 import javax.ws.rs.client.Client;
@@ -51,11 +52,13 @@ import kafka.zookeeper.ZooKeeperClient;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
+import org.apache.kafka.clients.admin.ListTopicsResult;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.Node;
 import org.apache.kafka.common.security.JaasUtils;
 import org.apache.kafka.common.security.auth.SecurityProtocol;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
@@ -66,7 +69,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.experimental.categories.Category;
 import scala.Option;
-import scala.collection.JavaConversions;
+import scala.collection.JavaConverters;
 
 /**
  * Test harness to run against a real, local Kafka cluster and REST proxy. This is essentially
@@ -181,10 +184,10 @@ public abstract class ClusterTestHarness {
     }
 
     brokerList =
-        TestUtils.getBrokerListStrFromServers(JavaConversions.asScalaBuffer(servers),
+        TestUtils.getBrokerListStrFromServers(JavaConverters.asScalaBuffer(servers),
                                               getBrokerSecurityProtocol());
     plaintextBrokerList =
-        TestUtils.getBrokerListStrFromServers(JavaConversions.asScalaBuffer(servers),
+        TestUtils.getBrokerListStrFromServers(JavaConverters.asScalaBuffer(servers),
             SecurityProtocol.PLAINTEXT);
 
     setupAcls();
@@ -199,7 +202,7 @@ public abstract class ClusterTestHarness {
       schemaRegProperties.put(SchemaRegistryConfig.COMPATIBILITY_CONFIG,
                               schemaRegCompatibility);
       String broker = SecurityProtocol.PLAINTEXT.name+"://"+TestUtils
-          .getBrokerListStrFromServers(JavaConversions.asScalaBuffer
+          .getBrokerListStrFromServers(JavaConverters.asScalaBuffer
               (servers), SecurityProtocol.PLAINTEXT);
       schemaRegProperties.put(SchemaRegistryConfig.KAFKASTORE_BOOTSTRAP_SERVERS_CONFIG, broker);
       schemaRegConnect = String.format("http://localhost:%d", schemaRegPort);
@@ -226,8 +229,7 @@ public abstract class ClusterTestHarness {
     restApp = new TestKafkaRestApplication(restConfig,
         getProducerPool(restConfig),
         null,
-        null,
-        getScalaConsumersContext(restConfig));
+        null);
     restServer = restApp.createServer();
     restServer.start();
   }
@@ -263,10 +265,6 @@ public abstract class ClusterTestHarness {
   }
 
   protected ProducerPool getProducerPool(KafkaRestConfig appConfig) {
-    return null;
-  }
-
-  protected ScalaConsumersContext getScalaConsumersContext(KafkaRestConfig appConfig) {
     return null;
   }
 
@@ -339,8 +337,58 @@ public abstract class ClusterTestHarness {
     return ClientBuilder.newClient();
   }
 
+  protected final String getClusterId() {
+    Properties properties = restConfig.getAdminProperties();
+    properties.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, brokerList);
+    AdminClient adminClient = AdminClient.create(properties);
+
+    try {
+      return adminClient.describeCluster().clusterId().get();
+    } catch (InterruptedException | ExecutionException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  protected final int getControllerID() {
+    Properties properties = restConfig.getAdminProperties();
+    properties.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, brokerList);
+    AdminClient adminClient = AdminClient.create(properties);
+
+    try {
+      return adminClient.describeCluster().controller().get().id();
+    } catch (InterruptedException | ExecutionException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  protected final ArrayList<Node> getBrokers() {
+    Properties properties = restConfig.getAdminProperties();
+    properties.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, brokerList);
+    AdminClient adminClient = AdminClient.create(properties);
+
+    try {
+      return new ArrayList<>(adminClient.describeCluster().nodes().get());
+    } catch (InterruptedException | ExecutionException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  protected final Set<String> getTopicNames() {
+    Properties properties = restConfig.getAdminProperties();
+    properties.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, brokerList);
+    AdminClient adminClient = AdminClient.create(properties);
+
+    ListTopicsResult result = adminClient.listTopics();
+
+    try {
+      return result.names().get();
+    } catch (InterruptedException | ExecutionException e) {
+      throw new RuntimeException(String.format("Failed to create topic: %s", e.getMessage()));
+    }
+  }
+
   protected final void createTopic(String topicName, int numPartitions, short replicationFactor) {
-    Properties properties = new Properties();
+    Properties properties = restConfig.getAdminProperties();
     properties.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, brokerList);
     AdminClient adminClient = AdminClient.create(properties);
 
@@ -348,6 +396,23 @@ public abstract class ClusterTestHarness {
         adminClient.createTopics(
             Collections.singletonList(
                 new NewTopic(topicName, numPartitions, replicationFactor)));
+
+    try {
+      result.all().get();
+    } catch (InterruptedException | ExecutionException e) {
+      Assert.fail(String.format("Failed to create topic: %s", e.getMessage()));
+    }
+  }
+
+  protected final void createTopic(
+      String topicName, Map<Integer, List<Integer>> replicasAssignments) {
+    Properties properties = restConfig.getAdminProperties();
+    properties.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, brokerList);
+    AdminClient adminClient = AdminClient.create(properties);
+
+    CreateTopicsResult result =
+        adminClient.createTopics(
+            Collections.singletonList(new NewTopic(topicName, replicasAssignments)));
 
     try {
       result.all().get();

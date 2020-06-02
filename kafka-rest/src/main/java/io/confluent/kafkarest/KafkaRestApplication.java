@@ -15,15 +15,20 @@
 
 package io.confluent.kafkarest;
 
+import io.confluent.kafkarest.backends.BackendsModule;
+import io.confluent.kafkarest.config.ConfigModule;
+import io.confluent.kafkarest.controllers.ControllersModule;
+import io.confluent.kafkarest.exceptions.ExceptionsModule;
+import io.confluent.kafkarest.extension.ClusterConfigTypeConverterProvider;
 import io.confluent.kafkarest.extension.ContextInvocationHandler;
 import io.confluent.kafkarest.extension.InstantConverterProvider;
 import io.confluent.kafkarest.extension.KafkaRestCleanupFilter;
 import io.confluent.kafkarest.extension.KafkaRestContextProvider;
 import io.confluent.kafkarest.extension.RestResourceExtension;
 import io.confluent.kafkarest.resources.ResourcesFeature;
+import io.confluent.kafkarest.response.ResponseModule;
 import io.confluent.kafkarest.v2.KafkaConsumerManager;
 import io.confluent.rest.Application;
-import io.confluent.rest.RestConfigException;
 import io.confluent.rest.exceptions.ConstraintViolationExceptionMapper;
 import io.confluent.rest.exceptions.KafkaExceptionMapper;
 import io.confluent.rest.exceptions.WebApplicationExceptionMapper;
@@ -31,6 +36,7 @@ import java.lang.reflect.Proxy;
 import java.util.List;
 import java.util.Properties;
 import javax.ws.rs.core.Configurable;
+import org.eclipse.jetty.servlet.ServletContextHandler;
 import org.eclipse.jetty.util.StringUtil;
 
 
@@ -41,12 +47,12 @@ public class KafkaRestApplication extends Application<KafkaRestConfig> {
 
   List<RestResourceExtension> restResourceExtensions;
 
-  public KafkaRestApplication() throws RestConfigException {
+  public KafkaRestApplication() {
     this(new Properties());
   }
 
-  public KafkaRestApplication(Properties props) throws RestConfigException {
-    super(new KafkaRestConfig(props));
+  public KafkaRestApplication(Properties props) {
+    this(new KafkaRestConfig(props));
   }
 
   public KafkaRestApplication(KafkaRestConfig config) {
@@ -57,12 +63,17 @@ public class KafkaRestApplication extends Application<KafkaRestConfig> {
         RestResourceExtension.class);
   }
 
+  @Override
+  public void configurePreResourceHandling(ServletContextHandler context) {
+  }
+
+  @Override
+  public void configurePostResourceHandling(ServletContextHandler context) {
+  }
 
   @Override
   public void setupResources(Configurable<?> config, KafkaRestConfig appConfig) {
-    setupInjectedResources(config, appConfig, null,
-        null, null, null
-    );
+    setupInjectedResources(config, appConfig, null, null, null);
   }
 
   /**
@@ -73,8 +84,7 @@ public class KafkaRestApplication extends Application<KafkaRestConfig> {
       Configurable<?> config, KafkaRestConfig appConfig,
       ProducerPool producerPool,
       KafkaConsumerManager kafkaConsumerManager,
-      AdminClientWrapper adminClientWrapperInjected,
-      ScalaConsumersContext scalaConsumersContext
+      AdminClientWrapper adminClientWrapperInjected
   ) {
     if (StringUtil.isBlank(appConfig.getString(KafkaRestConfig.BOOTSTRAP_SERVERS_CONFIG))
         && StringUtil.isBlank(appConfig.getString(KafkaRestConfig.ZOOKEEPER_CONNECT_CONFIG))) {
@@ -84,8 +94,7 @@ public class KafkaRestApplication extends Application<KafkaRestConfig> {
                                     + " needs to be configured");
     }
     KafkaRestContextProvider.initialize(config, appConfig, producerPool,
-        kafkaConsumerManager, adminClientWrapperInjected, scalaConsumersContext
-    );
+        kafkaConsumerManager, adminClientWrapperInjected);
     ContextInvocationHandler contextInvocationHandler = new ContextInvocationHandler();
     KafkaRestContext context =
         (KafkaRestContext) Proxy.newProxyInstance(
@@ -93,8 +102,17 @@ public class KafkaRestApplication extends Application<KafkaRestConfig> {
             new Class[]{KafkaRestContext.class},
             contextInvocationHandler
         );
+
+    config.register(new BackendsModule());
+    config.register(new ConfigModule(appConfig));
+    config.register(new ControllersModule());
+    config.register(new ExceptionsModule());
     config.register(new ResourcesFeature(context));
+    config.register(new ResponseModule());
+
     config.register(KafkaRestCleanupFilter.class);
+
+    config.register(ClusterConfigTypeConverterProvider.class);
     config.register(InstantConverterProvider.class);
 
     for (RestResourceExtension restResourceExtension : restResourceExtensions) {
