@@ -15,11 +15,14 @@
 
 package io.confluent.kafkarest;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.guava.GuavaModule;
+import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import io.confluent.kafkarest.backends.BackendsModule;
 import io.confluent.kafkarest.config.ConfigModule;
 import io.confluent.kafkarest.controllers.ControllersModule;
 import io.confluent.kafkarest.exceptions.ExceptionsModule;
-import io.confluent.kafkarest.extension.ClusterConfigTypeConverterProvider;
+import io.confluent.kafkarest.extension.EnumConverterProvider;
 import io.confluent.kafkarest.extension.ContextInvocationHandler;
 import io.confluent.kafkarest.extension.InstantConverterProvider;
 import io.confluent.kafkarest.extension.KafkaRestCleanupFilter;
@@ -56,7 +59,11 @@ public class KafkaRestApplication extends Application<KafkaRestConfig> {
   }
 
   public KafkaRestApplication(KafkaRestConfig config) {
-    super(config);
+    this(config, /* path= */ "");
+  }
+
+  public KafkaRestApplication(KafkaRestConfig config, String path) {
+    super(config, path);
 
     restResourceExtensions = config.getConfiguredInstances(
         KafkaRestConfig.KAFKA_REST_RESOURCE_EXTENSION_CONFIG,
@@ -73,7 +80,8 @@ public class KafkaRestApplication extends Application<KafkaRestConfig> {
 
   @Override
   public void setupResources(Configurable<?> config, KafkaRestConfig appConfig) {
-    setupInjectedResources(config, appConfig, null, null, null);
+    setupInjectedResources(
+        config, appConfig, /* producerPool= */ null, /* kafkaConsumerManager= */ null);
   }
 
   /**
@@ -83,8 +91,7 @@ public class KafkaRestApplication extends Application<KafkaRestConfig> {
   protected void setupInjectedResources(
       Configurable<?> config, KafkaRestConfig appConfig,
       ProducerPool producerPool,
-      KafkaConsumerManager kafkaConsumerManager,
-      AdminClientWrapper adminClientWrapperInjected
+      KafkaConsumerManager kafkaConsumerManager
   ) {
     if (StringUtil.isBlank(appConfig.getString(KafkaRestConfig.BOOTSTRAP_SERVERS_CONFIG))
         && StringUtil.isBlank(appConfig.getString(KafkaRestConfig.ZOOKEEPER_CONNECT_CONFIG))) {
@@ -94,7 +101,7 @@ public class KafkaRestApplication extends Application<KafkaRestConfig> {
                                     + " needs to be configured");
     }
     KafkaRestContextProvider.initialize(config, appConfig, producerPool,
-        kafkaConsumerManager, adminClientWrapperInjected);
+        kafkaConsumerManager);
     ContextInvocationHandler contextInvocationHandler = new ContextInvocationHandler();
     KafkaRestContext context =
         (KafkaRestContext) Proxy.newProxyInstance(
@@ -107,17 +114,24 @@ public class KafkaRestApplication extends Application<KafkaRestConfig> {
     config.register(new ConfigModule(appConfig));
     config.register(new ControllersModule());
     config.register(new ExceptionsModule());
-    config.register(new ResourcesFeature(context));
+    config.register(new ResourcesFeature(context, appConfig));
     config.register(new ResponseModule());
 
     config.register(KafkaRestCleanupFilter.class);
 
-    config.register(ClusterConfigTypeConverterProvider.class);
+    config.register(EnumConverterProvider.class);
     config.register(InstantConverterProvider.class);
 
     for (RestResourceExtension restResourceExtension : restResourceExtensions) {
       restResourceExtension.register(config, appConfig);
     }
+  }
+
+  @Override
+  protected ObjectMapper getJsonMapper() {
+    return super.getJsonMapper()
+        .registerModule(new GuavaModule())
+        .registerModule(new Jdk8Module());
   }
 
   @Override

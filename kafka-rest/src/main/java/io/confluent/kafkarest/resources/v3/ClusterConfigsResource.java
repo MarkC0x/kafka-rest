@@ -17,16 +17,14 @@ package io.confluent.kafkarest.resources.v3;
 
 import static java.util.Objects.requireNonNull;
 
-import io.confluent.kafkarest.Versions;
 import io.confluent.kafkarest.controllers.ClusterConfigManager;
 import io.confluent.kafkarest.entities.ClusterConfig;
 import io.confluent.kafkarest.entities.v3.ClusterConfigData;
-import io.confluent.kafkarest.entities.v3.ClusterData;
-import io.confluent.kafkarest.entities.v3.CollectionLink;
-import io.confluent.kafkarest.entities.v3.ConfigSynonymData;
+import io.confluent.kafkarest.entities.v3.ClusterConfigDataList;
 import io.confluent.kafkarest.entities.v3.GetClusterConfigResponse;
 import io.confluent.kafkarest.entities.v3.ListClusterConfigsResponse;
-import io.confluent.kafkarest.entities.v3.ResourceLink;
+import io.confluent.kafkarest.entities.v3.Resource;
+import io.confluent.kafkarest.entities.v3.ResourceCollection;
 import io.confluent.kafkarest.entities.v3.UpdateClusterConfigRequest;
 import io.confluent.kafkarest.resources.AsyncResponses;
 import io.confluent.kafkarest.resources.AsyncResponses.AsyncResponseBuilder;
@@ -48,6 +46,7 @@ import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
 import javax.ws.rs.container.AsyncResponse;
 import javax.ws.rs.container.Suspended;
+import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.Response.Status;
 
@@ -70,7 +69,7 @@ public final class ClusterConfigsResource {
   }
 
   @GET
-  @Produces(Versions.JSON_API)
+  @Produces(MediaType.APPLICATION_JSON)
   public void listClusterConfigs(
       @Suspended AsyncResponse asyncResponse,
       @PathParam("clusterId") String clusterId,
@@ -80,27 +79,33 @@ public final class ClusterConfigsResource {
         clusterConfigManager.get().listClusterConfigs(clusterId, configType)
             .thenApply(
                 configs ->
-                    new ListClusterConfigsResponse(
-                        new CollectionLink(
-                            urlFactory.create(
-                                "v3",
-                                "clusters",
-                                clusterId,
-                                String.format("%s-configs", configType.name().toLowerCase())),
-                            /* next= */ null),
-                        configs.stream()
-                            .sorted(
-                                Comparator.comparing(ClusterConfig::getType)
-                                    .thenComparing(ClusterConfig::getName))
-                            .map(this::toClusterConfigData)
-                            .collect(Collectors.toList())));
+                    ListClusterConfigsResponse.create(
+                        ClusterConfigDataList.builder()
+                            .setMetadata(
+                                ResourceCollection.Metadata.builder()
+                                    .setSelf(
+                                        urlFactory.create(
+                                            "v3",
+                                            "clusters",
+                                            clusterId,
+                                            String.format(
+                                                "%s-configs", configType.name().toLowerCase())))
+                                    .build())
+                            .setData(
+                                configs.stream()
+                                    .sorted(
+                                        Comparator.comparing(ClusterConfig::getType)
+                                            .thenComparing(ClusterConfig::getName))
+                                    .map(this::toClusterConfigData)
+                                    .collect(Collectors.toList()))
+                            .build()));
 
     AsyncResponses.asyncResume(asyncResponse, response);
   }
 
   @GET
   @Path("/{name}")
-  @Produces(Versions.JSON_API)
+  @Produces(MediaType.APPLICATION_JSON)
   public void getClusterConfig(
       @Suspended AsyncResponse asyncResponse,
       @PathParam("clusterId") String clusterId,
@@ -111,15 +116,15 @@ public final class ClusterConfigsResource {
         clusterConfigManager.get()
             .getClusterConfig(clusterId, configType, name)
             .thenApply(config -> config.orElseThrow(NotFoundException::new))
-            .thenApply(config -> new GetClusterConfigResponse(toClusterConfigData(config)));
+            .thenApply(config -> GetClusterConfigResponse.create(toClusterConfigData(config)));
 
     AsyncResponses.asyncResume(asyncResponse, response);
   }
 
   @PUT
   @Path("/{name}")
-  @Consumes(Versions.JSON_API)
-  @Produces(Versions.JSON_API)
+  @Consumes(MediaType.APPLICATION_JSON)
+  @Produces(MediaType.APPLICATION_JSON)
   public void upsertClusterConfig(
       @Suspended AsyncResponse asyncResponse,
       @PathParam("clusterId") String clusterId,
@@ -127,7 +132,7 @@ public final class ClusterConfigsResource {
       @PathParam("name") String name,
       @Valid UpdateClusterConfigRequest request
   ) {
-    String newValue = request.getData().getAttributes().getValue();
+    String newValue = request.getValue().orElse(null);
 
     CompletableFuture<Void> response =
         clusterConfigManager.get().upsertClusterConfig(clusterId, configType, name, newValue);
@@ -139,7 +144,7 @@ public final class ClusterConfigsResource {
 
   @DELETE
   @Path("/{name}")
-  @Produces(Versions.JSON_API)
+  @Produces(MediaType.APPLICATION_JSON)
   public void deleteClusterConfig(
       @Suspended AsyncResponse asyncResponse,
       @PathParam("clusterId") String clusterId,
@@ -155,29 +160,23 @@ public final class ClusterConfigsResource {
   }
 
   private ClusterConfigData toClusterConfigData(ClusterConfig clusterConfig) {
-    return new ClusterConfigData(
-        crnFactory.create(
-            ClusterData.ELEMENT_TYPE,
-            clusterConfig.getClusterId(),
-            ClusterConfigData.getElementType(clusterConfig.getType()),
-            clusterConfig.getName()),
-        new ResourceLink(
-            urlFactory.create(
-                "v3",
-                "clusters",
-                clusterConfig.getClusterId(),
-                String.format("%s-configs", clusterConfig.getType().name().toLowerCase()),
-                clusterConfig.getName())),
-        clusterConfig.getClusterId(),
-        clusterConfig.getType(),
-        clusterConfig.getName(),
-        clusterConfig.getValue(),
-        clusterConfig.isDefault(),
-        clusterConfig.isReadOnly(),
-        clusterConfig.isSensitive(),
-        clusterConfig.getSource(),
-        clusterConfig.getSynonyms().stream()
-            .map(ConfigSynonymData::fromConfigSynonym)
-            .collect(Collectors.toList()));
+    return ClusterConfigData.fromClusterConfig(clusterConfig)
+        .setMetadata(
+            Resource.Metadata.builder()
+                .setSelf(
+                    urlFactory.create(
+                        "v3",
+                        "clusters",
+                        clusterConfig.getClusterId(),
+                        String.format("%s-configs", clusterConfig.getType().name().toLowerCase()),
+                        clusterConfig.getName()))
+                .setResourceName(
+                    crnFactory.create(
+                        "kafka",
+                        clusterConfig.getClusterId(),
+                        String.format("%s-config", clusterConfig.getType().name().toLowerCase()),
+                        clusterConfig.getName()))
+                .build())
+        .build();
   }
 }
